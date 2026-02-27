@@ -1,0 +1,484 @@
+using System.Reflection;
+using Aiif.Net.Annotations;
+using Aiif.Net.Models;
+using Aiif.Net.Options;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.AspNetCore.Routing.Patterns;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
+
+namespace Aiif.Net.Services;
+
+public sealed class AiifDocumentBuilder
+{
+    private readonly EndpointDataSource _endpointDataSource;
+    private readonly AiifOptions _options;
+    private readonly IHostEnvironment _hostEnvironment;
+
+    public AiifDocumentBuilder(
+        EndpointDataSource endpointDataSource,
+        IOptions<AiifOptions> options,
+        IHostEnvironment hostEnvironment)
+    {
+        _endpointDataSource = endpointDataSource;
+        _options = options.Value;
+        _hostEnvironment = hostEnvironment;
+    }
+
+    public AiifDocument BuildDocument()
+    {
+        var endpoints = BuildEndpoints();
+
+        return new AiifDocument
+        {
+            AiifVersion = _options.AiifVersion,
+            Info = new AiifInfo
+            {
+                Name = _options.ApiName,
+                Description = _options.ApiDescription,
+                BaseUrl = _options.BaseUrl,
+                Version = _options.ApiVersion
+            },
+            Auth = BuildAuth(),
+            Endpoints = endpoints,
+            Errors = BuildErrorMap(endpoints),
+            AgentRules = LoadAgentRules()
+        };
+    }
+
+    public AiifSummaryDocument BuildSummary()
+    {
+        var endpoints = BuildEndpoints();
+
+        return new AiifSummaryDocument
+        {
+            Api = _options.ApiName,
+            BaseUrl = _options.BaseUrl,
+            AuthDocsPath = AuthIsRequiredByDefault() ? $"{NormalizeBaseDocsPath()}/auth" : null,
+            AgentRules = LoadAgentRules(),
+            Endpoints = endpoints
+                .Select(endpoint => new AiifSummaryEndpoint
+                {
+                    Name = endpoint.Name,
+                    Method = endpoint.Method,
+                    Path = endpoint.Path,
+                    Description = endpoint.Description,
+                    AuthRequired = endpoint.AuthRequired ?? AuthIsRequiredByDefault()
+                })
+                .ToList()
+        };
+    }
+
+    public AiifEndpointDocument? BuildEndpointDocument(string endpointName)
+    {
+        var endpoint = BuildEndpoints().FirstOrDefault(candidate => candidate.Name == endpointName);
+        if (endpoint is null)
+        {
+            return null;
+        }
+
+        return new AiifEndpointDocument
+        {
+            Endpoint = endpoint,
+            Errors = BuildErrorMap([endpoint]),
+            AgentRules = LoadAgentRules()
+        };
+    }
+
+    public AiifAuth? BuildAuth()
+    {
+        if (string.Equals(_options.Auth.Type, "none", StringComparison.OrdinalIgnoreCase))
+        {
+            return new AiifAuth
+            {
+                Type = "none",
+                Description = _options.Auth.Description,
+                Header = _options.Auth.Header,
+                Scheme = _options.Auth.Scheme,
+                Instructions = []
+            };
+        }
+
+        var instructions = new List<string>();
+        instructions.AddRange(_options.Auth.Instructions);
+        instructions.AddRange(LoadAuthInstructionsFromFile());
+        instructions.AddRange(LoadAuthInstructionsFromAssembly());
+
+        var normalizedInstructions = instructions
+            .Where(instruction => !string.IsNullOrWhiteSpace(instruction))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        if (normalizedInstructions.Count == 0)
+        {
+            normalizedInstructions.AddRange(BuildDefaultAuthInstructions(_options.Auth.Type));
+        }
+
+        return new AiifAuth
+        {
+            Type = string.IsNullOrWhiteSpace(_options.Auth.Type) ? "bearer" : _options.Auth.Type,
+            Description = _options.Auth.Description,
+            Header = _options.Auth.Header,
+            Scheme = _options.Auth.Scheme,
+            Instructions = normalizedInstructions,
+            Acquire = _options.Auth.Acquire is null
+                ? null
+                : new AiifAuthAcquire
+                {
+                    EndpointPath = _options.Auth.Acquire.EndpointPath,
+                    Method = _options.Auth.Acquire.Method,
+                    ResponseTokenField = _options.Auth.Acquire.ResponseTokenField,
+                    ResponseExpiresInField = _options.Auth.Acquire.ResponseExpiresInField,
+                    ResponseRefreshTokenField = _options.Auth.Acquire.ResponseRefreshTokenField
+                },
+            Apply = _options.Auth.Apply is null
+                ? null
+                : new AiifAuthApply
+                {
+                    Location = _options.Auth.Apply.Location,
+                    Name = _options.Auth.Apply.Name,
+                    Prefix = _options.Auth.Apply.Prefix
+                },
+            Refresh = _options.Auth.Refresh is null
+                ? null
+                : new AiifAuthRefresh
+                {
+                    Strategy = _options.Auth.Refresh.Strategy,
+                    EndpointPath = _options.Auth.Refresh.EndpointPath,
+                    Method = _options.Auth.Refresh.Method,
+                    BeforeExpirySeconds = _options.Auth.Refresh.BeforeExpirySeconds
+                }
+        };
+    }
+
+    private static List<string> BuildDefaultAuthInstructions(string authType)
+    {
+        return authType.ToLowerInvariant() switch
+        {
+            "api_key" =>
+            [
+                "Provide the API key in the configured location before calling protected endpoints."
+            ],
+            "bearer" =>
+            [
+                "Acquire an access token before calling protected endpoints.",
+                "Send the token in Authorization header using Bearer <token>."
+            ],
+            "basic" =>
+            [
+                "Send Basic credentials in the Authorization header for protected endpoints."
+            ],
+            "oauth2" =>
+            [
+                "Acquire an OAuth2 access token before calling protected endpoints.",
+                "Attach the token as instructed by the apply settings."
+            ],
+            _ =>
+            [
+                "Authenticate according to the configured auth settings before calling protected endpoints."
+            ]
+        };
+    }
+
+    private List<AiifEndpoint> BuildEndpoints()
+    {
+        var endpoints = new List<AiifEndpoint>();
+
+        foreach (var endpoint in _endpointDataSource.Endpoints.OfType<RouteEndpoint>())
+        {
+            var route = endpoint.RoutePattern.RawText ?? "/";
+            if (!route.StartsWith('/'))
+            {
+                route = "/" + route;
+            }
+
+            var methods = endpoint.Metadata
+                .OfType<HttpMethodMetadata>()
+                .SelectMany(metadata => metadata.HttpMethods)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            if (methods.Length == 0)
+            {
+                methods = ["GET"];
+            }
+
+            foreach (var method in methods)
+            {
+                var normalizedMethod = method.ToUpperInvariant();
+                var endpointName = BuildEndpointName(endpoint, normalizedMethod, route);
+
+                endpoints.Add(new AiifEndpoint
+                {
+                    Name = endpointName,
+                    Method = normalizedMethod,
+                    Path = route,
+                    Description = BuildDescription(endpoint),
+                    AuthRequired = BuildAuthRequired(endpoint),
+                    Params = BuildPathParams(endpoint.RoutePattern),
+                    ResponseContentType = "application/json",
+                    Response = new
+                    {
+                        type = "object",
+                        description = "Successful response payload."
+                    },
+                    Errors = [],
+                    AuthInstructions = endpoint.Metadata
+                        .OfType<AiifAuthInstructionAttribute>()
+                        .Select(attribute => attribute.Instruction)
+                        .Where(value => !string.IsNullOrWhiteSpace(value))
+                        .Distinct(StringComparer.Ordinal)
+                        .ToList(),
+                    AgentRules = endpoint.Metadata
+                        .OfType<AiifAgentRuleAttribute>()
+                        .Select(attribute => attribute.Rule)
+                        .Where(value => !string.IsNullOrWhiteSpace(value))
+                        .Distinct(StringComparer.Ordinal)
+                        .ToList()
+                });
+            }
+        }
+
+        return endpoints
+            .OrderBy(endpoint => endpoint.Name, StringComparer.Ordinal)
+            .ToList();
+    }
+
+    private Dictionary<string, AiifError> BuildErrorMap(IEnumerable<AiifEndpoint> endpoints)
+    {
+        var codes = endpoints
+            .SelectMany(endpoint => endpoint.Errors)
+            .Distinct(StringComparer.Ordinal);
+
+        var map = new Dictionary<string, AiifError>(StringComparer.Ordinal);
+        foreach (var code in codes)
+        {
+            var status = code switch
+            {
+                "unauthorized" => 401,
+                "forbidden" => 403,
+                "not_found" => 404,
+                "validation_error" => 422,
+                "rate_limited" => 429,
+                _ => 400
+            };
+
+            map[code] = new AiifError
+            {
+                Code = code,
+                HttpStatus = status,
+                Message = code.Replace('_', ' '),
+                Description = $"Error returned by the API: {code}."
+            };
+        }
+
+        return map;
+    }
+
+    private List<string> LoadAgentRules()
+    {
+        var rules = new List<string>();
+
+        var assembly = Assembly.GetEntryAssembly();
+        if (assembly is not null)
+        {
+            rules.AddRange(assembly
+                .GetCustomAttributes<AiifAgentRuleAttribute>()
+                .Select(attribute => attribute.Rule));
+        }
+
+        var rulesFile = ResolvePath(_options.AgentRulesFilePath);
+        if (!string.IsNullOrWhiteSpace(rulesFile) && File.Exists(rulesFile))
+        {
+            rules.AddRange(ReadLineInstructions(rulesFile));
+        }
+
+        return rules
+            .Where(rule => !string.IsNullOrWhiteSpace(rule))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+    }
+
+    private List<string> LoadAuthInstructionsFromAssembly()
+    {
+        var assembly = Assembly.GetEntryAssembly();
+        if (assembly is null)
+        {
+            return [];
+        }
+
+        return assembly
+            .GetCustomAttributes<AiifAuthInstructionAttribute>()
+            .Select(attribute => attribute.Instruction)
+            .Where(instruction => !string.IsNullOrWhiteSpace(instruction))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+    }
+
+    private List<string> LoadAuthInstructionsFromFile()
+    {
+        var authFile = ResolvePath(_options.AuthInstructionsFilePath);
+        if (string.IsNullOrWhiteSpace(authFile) || !File.Exists(authFile))
+        {
+            return [];
+        }
+
+        return ReadLineInstructions(authFile);
+    }
+
+    private static List<string> ReadLineInstructions(string filePath)
+    {
+        return File.ReadAllLines(filePath)
+            .Select(line => line.Trim())
+            .Where(line => !string.IsNullOrWhiteSpace(line))
+            .ToList();
+    }
+
+    private static string BuildDescription(RouteEndpoint endpoint)
+    {
+        var endpointName = endpoint.Metadata.GetMetadata<IEndpointNameMetadata>()?.EndpointName;
+        if (!string.IsNullOrWhiteSpace(endpointName))
+        {
+            return $"Executes endpoint '{endpointName}'.";
+        }
+
+        if (!string.IsNullOrWhiteSpace(endpoint.DisplayName))
+        {
+            return endpoint.DisplayName!;
+        }
+
+        return "API endpoint.";
+    }
+
+    private static bool? BuildAuthRequired(RouteEndpoint endpoint)
+    {
+        if (endpoint.Metadata.GetMetadata<IAllowAnonymous>() is not null)
+        {
+            return false;
+        }
+
+        if (endpoint.Metadata.GetMetadata<IAuthorizeData>() is not null)
+        {
+            return true;
+        }
+
+        return null;
+    }
+
+    private static List<AiifParameter> BuildPathParams(RoutePattern pattern)
+    {
+        return pattern.Parameters
+            .Select(parameter => new AiifParameter
+            {
+                Name = parameter.Name,
+                Location = "path",
+                Type = "string",
+                Required = true,
+                Description = $"Path parameter '{parameter.Name}'."
+            })
+            .ToList();
+    }
+
+    private static string BuildEndpointName(RouteEndpoint endpoint, string method, string route)
+    {
+        var explicitName = endpoint.Metadata.GetMetadata<IEndpointNameMetadata>()?.EndpointName;
+        if (!string.IsNullOrWhiteSpace(explicitName))
+        {
+            return ToSnakeCase(explicitName);
+        }
+
+        var normalizedRoute = route
+            .Trim('/')
+            .Replace("{", string.Empty, StringComparison.Ordinal)
+            .Replace("}", string.Empty, StringComparison.Ordinal)
+            .Replace('-', '_')
+            .Replace('/', '_');
+
+        if (string.IsNullOrWhiteSpace(normalizedRoute))
+        {
+            normalizedRoute = "root";
+        }
+
+        return ToSnakeCase($"{method}_{normalizedRoute}");
+    }
+
+    private static string ToSnakeCase(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "endpoint";
+        }
+
+        var cleaned = value.Trim();
+        var buffer = new List<char>(cleaned.Length + 8);
+
+        for (var index = 0; index < cleaned.Length; index++)
+        {
+            var character = cleaned[index];
+
+            if (char.IsLetterOrDigit(character))
+            {
+                var isUpper = char.IsUpper(character);
+                if (isUpper && index > 0 && char.IsLetterOrDigit(cleaned[index - 1]) && cleaned[index - 1] != '_')
+                {
+                    buffer.Add('_');
+                }
+
+                buffer.Add(char.ToLowerInvariant(character));
+            }
+            else
+            {
+                if (buffer.Count > 0 && buffer[^1] != '_')
+                {
+                    buffer.Add('_');
+                }
+            }
+        }
+
+        var snake = new string(buffer.ToArray()).Trim('_');
+        while (snake.Contains("__", StringComparison.Ordinal))
+        {
+            snake = snake.Replace("__", "_", StringComparison.Ordinal);
+        }
+
+        return string.IsNullOrWhiteSpace(snake) ? "endpoint" : snake;
+    }
+
+    private bool AuthIsRequiredByDefault()
+    {
+        return !string.Equals(_options.Auth.Type, "none", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private string NormalizeBaseDocsPath()
+    {
+        var path = _options.BaseDocsPath;
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return "/ai-docs";
+        }
+
+        path = path.Trim();
+        if (!path.StartsWith('/'))
+        {
+            path = "/" + path;
+        }
+
+        return path.TrimEnd('/');
+    }
+
+    private string? ResolvePath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+
+        if (Path.IsPathRooted(path))
+        {
+            return path;
+        }
+
+        return Path.Combine(_hostEnvironment.ContentRootPath, path);
+    }
+}

@@ -1,0 +1,32 @@
+# Build output
+[Bb]in/
+[Oo]bj/
+out/
+artifacts/
+
+# Test output
+[Tt]est[Rr]esult*/
+coverage/
+coverage-*/
+*.coverage
+*.coveragexml
+*.trx
+
+# NuGet package output
+*.nupkg
+*.snupkg
+
+# User/IDE files
+.vs/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
