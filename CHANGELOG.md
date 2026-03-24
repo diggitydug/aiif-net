@@ -6,6 +6,8 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-03-23
+
 ### Added
 - Added configurable AIIF endpoint description overrides through AiifOptions.EndpointDescriptions:
   - Document
@@ -19,10 +21,14 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   - GET /ai-docs/auth
 - Added tests covering default and overridden AIIF endpoint descriptions.
 - Added path-based endpoint document resolution tests in addition to name-based resolution tests.
+- Added `AutoMapAiifFromSwagger(OpenApiInfo)` extension to populate AIIF `ApiName` and `ApiDescription` from Swagger metadata.
 
 ### Changed
 - AIIF endpoint mappings now set explicit endpoint descriptions instead of falling back to generic endpoint-name text.
 - AIIF endpoint-detail lookup supports matching by endpoint name or normalized route path.
+- Changed `AiifOptions.ApiName` and `AiifOptions.ApiDescription` to optional values with runtime defaults.
+- Changed `AiifOptions.BaseDocsPath` to automatic/internal configuration (defaults to `/ai-docs`).
+- Updated README with Swagger/AIIF shared metadata setup guidance to reduce duplicate configuration.
 
 ## [0.1.3-local] - 2026-03-22
 
