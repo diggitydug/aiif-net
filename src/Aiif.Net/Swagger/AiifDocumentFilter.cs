@@ -91,7 +91,7 @@ public sealed class AiifDocumentFilter : IDocumentFilter
                                 Name = "endpoint",
                                 In = ParameterLocation.Path,
                                 Required = true,
-                                Description = "AIIF endpoint name",
+                                Description = "AIIF endpoint name or API route path",
                                 Schema = new OpenApiSchema { Type = "string" }
                             }
                         },

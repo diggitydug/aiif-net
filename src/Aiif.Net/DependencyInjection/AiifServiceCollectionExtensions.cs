@@ -4,6 +4,7 @@ using Aiif.Net.Services;
 using Aiif.Net.Swagger;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.OpenApi.Models;
 using Swashbuckle.AspNetCore.SwaggerGen;
 
 namespace Aiif.Net.DependencyInjection;
@@ -37,6 +38,37 @@ public static class AiifServiceCollectionExtensions
         {
             options.DocumentFilter<AiifDocumentFilter>();
             configureSwagger(options);
+        });
+
+        return services;
+    }
+
+    /// <summary>
+    /// Convenience method to populate AIIF options from OpenApiInfo (from SwaggerDoc).
+    /// Use this to avoid duplicating API title and description between SwaggerDoc and AIIF.
+    /// 
+    /// Example:
+    /// <code>
+    /// var openApiInfo = new OpenApiInfo { Title = "My API", Description = "My API Description" };
+    /// services.AddAiif(aiif => { aiif.ApiVersion = "v1"; }, sw => sw.SwaggerDoc("v1", openApiInfo));
+    /// services.AutoMapAiifFromSwagger(openApiInfo);
+    /// </code>
+    /// </summary>
+    public static IServiceCollection AutoMapAiifFromSwagger(
+        this IServiceCollection services,
+        OpenApiInfo openApiInfo)
+    {
+        services.Configure<AiifOptions>(options =>
+        {
+            if (string.IsNullOrWhiteSpace(options.ApiName) && !string.IsNullOrWhiteSpace(openApiInfo?.Title))
+            {
+                options.ApiName = openApiInfo.Title;
+            }
+
+            if (string.IsNullOrWhiteSpace(options.ApiDescription) && !string.IsNullOrWhiteSpace(openApiInfo?.Description))
+            {
+                options.ApiDescription = openApiInfo.Description;
+            }
         });
 
         return services;

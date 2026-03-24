@@ -13,6 +13,65 @@ namespace Aiif.Net.Tests;
 public sealed class AiifAuthEndpointsTests
 {
     [Fact]
+    public async Task AiDocs_Summary_Uses_Default_Descriptions_For_Aiif_Endpoints()
+    {
+        await using var app = await CreateAppAsync();
+        var client = app.GetTestClient();
+
+        var response = await client.GetAsync("/ai-docs/summary");
+        response.EnsureSuccessStatusCode();
+
+        await using var stream = await response.Content.ReadAsStreamAsync();
+        using var document = await JsonDocument.ParseAsync(stream);
+
+        var endpoints = document.RootElement.GetProperty("endpoints").EnumerateArray().ToList();
+
+        var auth = endpoints.First(e => e.GetProperty("name").GetString() == "get_aiif_auth");
+        Assert.Equal(
+            "Returns AIIF authentication instructions, token acquisition details, and auth application rules.",
+            auth.GetProperty("description").GetString());
+
+        var summary = endpoints.First(e => e.GetProperty("name").GetString() == "get_aiif_summary");
+        Assert.Equal(
+            "Returns a lightweight AIIF endpoint catalog for discovery (name, method, path, description, and auth requirement).",
+            summary.GetProperty("description").GetString());
+
+        var endpoint = endpoints.First(e => e.GetProperty("name").GetString() == "get_aiif_endpoint");
+        Assert.Equal(
+            "Returns the AIIF document for a single endpoint by endpoint name or route path.",
+            endpoint.GetProperty("description").GetString());
+    }
+
+    [Fact]
+    public async Task AiDocs_Summary_Allows_Developer_Override_For_Aiif_Descriptions()
+    {
+        await using var app = await CreateAppAsync(options =>
+        {
+            options.EndpointDescriptions.Summary = "Custom summary description.";
+            options.EndpointDescriptions.EndpointDetail = "Custom endpoint detail description.";
+            options.EndpointDescriptions.Auth = "Custom auth description.";
+        });
+
+        var client = app.GetTestClient();
+        var response = await client.GetAsync("/ai-docs/summary");
+        response.EnsureSuccessStatusCode();
+
+        await using var stream = await response.Content.ReadAsStreamAsync();
+        using var document = await JsonDocument.ParseAsync(stream);
+
+        var endpoints = document.RootElement.GetProperty("endpoints").EnumerateArray().ToList();
+
+        var auth = endpoints.First(e => e.GetProperty("name").GetString() == "get_aiif_auth");
+        Assert.Equal("Custom auth description.", auth.GetProperty("description").GetString());
+
+        var summary = endpoints.First(e => e.GetProperty("name").GetString() == "get_aiif_summary");
+        Assert.Equal("Custom summary description.", summary.GetProperty("description").GetString());
+
+        var endpoint = endpoints.First(e => e.GetProperty("name").GetString() == "get_aiif_endpoint");
+        Assert.Equal("Custom endpoint detail description.", endpoint.GetProperty("description").GetString());
+    }
+
+    [Fact]
     public async Task AiDocsAuth_Returns_Instruction_List_And_Auth_Flows()
     {
         await using var app = await CreateAppAsync();
@@ -63,7 +122,54 @@ public sealed class AiifAuthEndpointsTests
         Assert.All(instructions.EnumerateArray(), item => Assert.Equal(JsonValueKind.String, item.ValueKind));
     }
 
-    private static async Task<WebApplication> CreateAppAsync()
+    [Fact]
+    public async Task AiDocs_EndpointDocument_Can_Be_Resolved_By_Path()
+    {
+        await using var app = await CreateAppAsync();
+        var client = app.GetTestClient();
+
+        var response = await client.GetAsync("/ai-docs/weather/current");
+        response.EnsureSuccessStatusCode();
+
+        await using var stream = await response.Content.ReadAsStreamAsync();
+        using var document = await JsonDocument.ParseAsync(stream);
+
+        var endpoint = document.RootElement.GetProperty("endpoint");
+        Assert.Equal("/weather/current", endpoint.GetProperty("path").GetString());
+    }
+
+    [Fact]
+    public async Task AiDocs_EndpointDocument_Can_Be_Resolved_By_Name()
+    {
+        await using var app = await CreateAppAsync();
+        var client = app.GetTestClient();
+
+        var summaryResponse = await client.GetAsync("/ai-docs/summary");
+        summaryResponse.EnsureSuccessStatusCode();
+
+        await using var summaryStream = await summaryResponse.Content.ReadAsStreamAsync();
+        using var summaryDocument = await JsonDocument.ParseAsync(summaryStream);
+
+        var endpointName = summaryDocument.RootElement
+            .GetProperty("endpoints")
+            .EnumerateArray()
+            .First(endpoint => endpoint.GetProperty("path").GetString() == "/weather/current")
+            .GetProperty("name")
+            .GetString();
+
+        Assert.False(string.IsNullOrWhiteSpace(endpointName));
+
+        var response = await client.GetAsync($"/ai-docs/{endpointName}");
+        response.EnsureSuccessStatusCode();
+
+        await using var stream = await response.Content.ReadAsStreamAsync();
+        using var document = await JsonDocument.ParseAsync(stream);
+
+        var endpoint = document.RootElement.GetProperty("endpoint");
+        Assert.Equal(endpointName, endpoint.GetProperty("name").GetString());
+    }
+
+    private static async Task<WebApplication> CreateAppAsync(Action<AiifOptions>? configure = null)
     {
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
@@ -72,7 +178,6 @@ public sealed class AiifAuthEndpointsTests
         {
             options.AutoMapEndpoints = false;
             options.AiifVersion = "1.0";
-            options.BaseDocsPath = "/ai-docs";
             options.ApiName = "Test API";
             options.ApiDescription = "Test API Description";
             options.BaseUrl = "https://api.example.com/v1";
@@ -110,6 +215,8 @@ public sealed class AiifAuthEndpointsTests
                     BeforeExpirySeconds = 60
                 }
             };
+
+            configure?.Invoke(options);
         });
 
         var app = builder.Build();
