@@ -6,6 +6,17 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-03-25
+
+### Added
+- Added direct AIIF document export API for generating static JSON files without fetching `/ai-docs` over HTTP.
+- Added `WebApplication` and `IServiceProvider` extension methods for writing the AIIF document to disk.
+- Added machine-readable constraint fields for AIIF parameters (`minimum`, `maximum`, `min_length`, `max_length`, `pattern`, `format`).
+- Added test coverage for direct AIIF file export.
+
+### Changed
+- Promoted package versioning from local-only suffixes to a publishable SemVer release (`0.2.0`).
+
 ## [0.1.4] - 2026-03-23
 
 ### Added

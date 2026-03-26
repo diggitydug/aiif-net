@@ -6,7 +6,7 @@
     <LangVersion>latest</LangVersion>
 
     <PackageId>Aiif.Net</PackageId>
-    <Version>0.1.4-local</Version>
+    <Version>0.2.0</Version>
     <Authors>Aiif.Net Contributors</Authors>
     <Company>Aiif.Net</Company>
     <Description>AIIF documentation and endpoint generation for ASP.NET Core using Swashbuckle.</Description>

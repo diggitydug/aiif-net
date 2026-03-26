@@ -1,0 +1,63 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Clean Aiif.Net Outputs",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "-lc",
+        "find . -type d -name bin -prune -exec rm -rf {} + && rm -rf artifacts/nuget"
+      ],
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Build Aiif.Net",
+      "type": "shell",
+      "command": "dotnet",
+      "args": [
+        "build",
+        "aiif-net.sln",
+        "-c",
+        "Release"
+      ],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Pack Aiif.Net NuGet",
+      "type": "shell",
+      "dependsOn": [
+        "Clean Aiif.Net Outputs"
+      ],
+      "dependsOrder": "sequence",
+      "command": "dotnet",
+      "args": [
+        "pack",
+        "src/Aiif.Net/Aiif.Net.csproj",
+        "-c",
+        "Release",
+        "-o",
+        "artifacts/nuget",
+        "-p:GeneratePackageOnBuild=false"
+      ],
+      "group": "build",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": "$msCompile"
+    }
+  ]
+}

@@ -13,15 +13,13 @@ It generates and serves the required AIIF endpoints:
 
 ## Install
 
-```xml
-<ItemGroup>
-  <PackageReference Include="Aiif.Net" Version="0.1.0" />
-</ItemGroup>
+```bash
+dotnet add package Aiif.Net --version 0.2.0
 ```
 
-## Local Package Build (for sibling repos)
+## Local Package Build
 
-Build a local NuGet package and publish it to the default feed used by `aiforai-api`:
+Build a local NuGet package into a local feed directory:
 
 ```bash
 ./scripts/build-local-package.sh
@@ -30,7 +28,7 @@ Build a local NuGet package and publish it to the default feed used by `aiforai-
 Default output feed:
 
 ```text
-../aiforai-api/.nuget/local-packages
+./artifacts/local-packages
 ```
 
 Optional custom output path:
@@ -126,6 +124,63 @@ app.MapAiifEndpoints();
 ```
 
 This guarantees AIIF routes are available in all hosting setups.
+
+## Export AIIF JSON Without Running The HTTP Server
+
+`Aiif.Net` can generate the full AIIF document directly to a file from your app's DI container.
+
+This is useful for CI pipelines and spec validation workflows where you want a static file without starting Kestrel and calling `/ai-docs` over HTTP.
+
+### 1. Add a command path in your consuming app
+
+```csharp
+using Aiif.Net.Endpoints;
+
+var builder = WebApplication.CreateBuilder(args);
+var aiifExportPath = GetArgumentValue(args, "--export-aiif");
+
+// ... AddAiif + endpoint mappings ...
+
+var app = builder.Build();
+app.MapAiifEndpoints();
+
+if (!string.IsNullOrWhiteSpace(aiifExportPath))
+{
+    await app.ExportAiifDocumentToFileAsync(aiifExportPath);
+    return;
+}
+
+app.Run();
+
+static string? GetArgumentValue(string[] args, string key)
+{
+    for (var i = 0; i < args.Length; i++)
+    {
+        if (string.Equals(args[i], key, StringComparison.OrdinalIgnoreCase))
+        {
+            return i + 1 < args.Length ? args[i + 1] : null;
+        }
+    }
+
+    return null;
+}
+```
+
+### 2. Run the export command
+
+```bash
+dotnet run --project src/YourApi/YourApi.csproj -- --export-aiif ./generated/your-api.aiif.json
+```
+
+`Aiif.Net` will create the target directory if it does not exist.
+
+### 3. Validate with `aiif-spec`
+
+```bash
+python ../aiif-spec/tools/validate-aiif.py --aiif ./generated/your-api.aiif.json
+```
+
+If your project uses a different Python command, replace `python` with `python3` or `py`.
 
 ## Reducing Configuration Boilerplate with Swagger Integration
 
@@ -318,19 +373,3 @@ If no explicit endpoint name is provided, `Aiif.Net` derives a snake_case name f
 ## OpenAPI Visibility
 
 `Aiif.Net` adds AI docs routes to OpenAPI through the Swagger document filter so humans can see that AIIF endpoints are exposed.
-
-## NuGet Publishing
-
-This repository includes a GitHub Actions workflow at [.github/workflows/publish-nuget.yml](.github/workflows/publish-nuget.yml).
-
-- Trigger: push a git tag in the format `vX.Y.Z` (example: `v0.2.0`).
-- Package version: derived from the tag (the leading `v` is removed).
-- Secret required: `NUGET_API_KEY` in repository settings.
-- A GitHub organization is not required; publishing to public NuGet works with a personal NuGet.org account/API key.
-
-Example release commands:
-
-```bash
-git tag v0.2.0
-git push origin v0.2.0
-```

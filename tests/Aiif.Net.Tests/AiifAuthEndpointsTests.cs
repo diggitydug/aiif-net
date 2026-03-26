@@ -169,6 +169,25 @@ public sealed class AiifAuthEndpointsTests
         Assert.Equal(endpointName, endpoint.GetProperty("name").GetString());
     }
 
+    [Fact]
+    public async Task ExportAiifDocumentToFileAsync_Writes_Aiif_Json_File()
+    {
+        await using var app = await CreateAppAsync();
+        var outputPath = Path.Combine(Path.GetTempPath(), $"aiif-net-{Guid.NewGuid():N}.json");
+
+        await app.ExportAiifDocumentToFileAsync(outputPath);
+
+        Assert.True(File.Exists(outputPath));
+
+        await using var stream = File.OpenRead(outputPath);
+        using var document = await JsonDocument.ParseAsync(stream);
+
+        Assert.Equal("1.0", document.RootElement.GetProperty("aiif_version").GetString());
+        Assert.Equal("Test API", document.RootElement.GetProperty("info").GetProperty("name").GetString());
+
+        File.Delete(outputPath);
+    }
+
     private static async Task<WebApplication> CreateAppAsync(Action<AiifOptions>? configure = null)
     {
         var builder = WebApplication.CreateBuilder();

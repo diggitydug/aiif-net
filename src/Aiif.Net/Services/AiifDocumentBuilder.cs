@@ -454,7 +454,8 @@ public sealed class AiifDocumentBuilder
                 Location = "path",
                 Type = "string",
                 Required = true,
-                Description = $"Path parameter '{parameter.Name}'."
+                Description = $"Path parameter '{parameter.Name}'.",
+                MinLength = 1
             })
             .ToList();
     }

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Build and pack Aiif.Net into a local feed that aiforai-api can restore from.
+# Build and pack Aiif.Net into a local feed directory.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PROJECT_PATH="${REPO_ROOT}/src/Aiif.Net/Aiif.Net.csproj"
-DEFAULT_OUTPUT="${REPO_ROOT}/../aiforai-api/.nuget/local-packages"
+DEFAULT_OUTPUT="${REPO_ROOT}/artifacts/local-packages"
 OUTPUT_DIR="${1:-${DEFAULT_OUTPUT}}"
 
 echo "Packing Aiif.Net from: ${PROJECT_PATH}"

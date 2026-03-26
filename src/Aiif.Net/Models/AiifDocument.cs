@@ -171,6 +171,24 @@ public sealed class AiifParameter
 
     [JsonPropertyName("description")]
     public required string Description { get; init; }
+
+    [JsonPropertyName("minimum")]
+    public decimal? Minimum { get; init; }
+
+    [JsonPropertyName("maximum")]
+    public decimal? Maximum { get; init; }
+
+    [JsonPropertyName("min_length")]
+    public int? MinLength { get; init; }
+
+    [JsonPropertyName("max_length")]
+    public int? MaxLength { get; init; }
+
+    [JsonPropertyName("pattern")]
+    public string? Pattern { get; init; }
+
+    [JsonPropertyName("format")]
+    public string? Format { get; init; }
 }
 
 public sealed class AiifError
